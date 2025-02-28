@@ -30,6 +30,10 @@ set (sample_sgemm_tensor_core_files
     sgemm_tensorcore.cu
 )
 
+set (sample_sgemm_cublas_files
+    sgemm_cublas.cu
+)
+
 set (SAMPLES_HEADER_DIR
     ${PROJECT_SOURCE_DIR}/SGEMM
 
@@ -76,3 +80,7 @@ target_link_libraries(sgemm_double_buffer PUBLIC sgemm)
 add_executable(sgemm_tensor_core ${sample_sgemm_tensor_core_files})
 target_compile_features(sgemm_tensor_core PUBLIC cxx_std_14)
 target_link_libraries(sgemm_tensor_core PUBLIC sgemm)
+
+add_executable(sgemm_cublas ${sample_sgemm_cublas_files})
+target_compile_features(sgemm_cublas PUBLIC cxx_std_14)
+target_link_libraries(sgemm_cublas PUBLIC sgemm)

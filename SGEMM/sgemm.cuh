@@ -33,4 +33,8 @@ namespace gemm
     void launchSgemmSmemKernel_v7(const float *A, const float *B, float *C, const int M, const int N, const int K,
                                   const float alpha, const float beta, cudaStream_t stream = 0);
 
+    // cublas api
+    void launchSgemmcuBlas(const float *A, const float *B, float *C, const int M, const int N, const int K,
+                           const float alpha, const float beta, cudaStream_t stream = 0);
+
 }

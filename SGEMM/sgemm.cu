@@ -1,10 +1,12 @@
 
 #include "sgemm.cuh"
+#include "utils.h"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <assert.h>
 #include <mma.h>
+#include <cublas_v2.h>
 #include <cuda/barrier>
 
 namespace gemm
@@ -745,33 +747,33 @@ namespace gemm
     {
         using namespace nvcuda;
         int shm_offset;
-        #pragma unroll
+#pragma unroll
         for (int wmidx = 0; wmidx < WMITERS; ++wmidx)
         {
-            #pragma unroll
+#pragma unroll
             for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
             {
                 shm_offset = buffer_id * BK * (BM + extra_col) + wkidx * (BM + extra_col) + warp_row * WM + wmidx * WMMA_M;
                 wmma::load_matrix_sync(a_frag[wmidx * WKITERS + wkidx], s_a + shm_offset, BM + extra_col);
             }
         }
-        #pragma unroll
+#pragma unroll
         for (int wnidx = 0; wnidx < WNITERS; ++wnidx)
         {
-            #pragma unroll
+#pragma unroll
             for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
             {
                 shm_offset = buffer_id * BK * (BN + extra_col) + wkidx * (BN + extra_col) + warp_col * WN + wnidx * WMMA_N;
                 wmma::load_matrix_sync(b_frag[wnidx * WKITERS + wkidx], s_b + shm_offset, BN + extra_col);
             }
         }
-        #pragma unroll
+#pragma unroll
         for (int wmidx = 0; wmidx < WMITERS; ++wmidx)
         {
-            #pragma unroll
+#pragma unroll
             for (int wnidx = 0; wnidx < WNITERS; ++wnidx)
             {
-                #pragma unroll
+#pragma unroll
                 for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
                 {
                     wmma::mma_sync(acc_frag[wmidx * WNITERS + wnidx], a_frag[wmidx * WKITERS + wkidx],
@@ -786,15 +788,15 @@ namespace gemm
                                                    const int offset_c, const float alpha, const float beta)
     {
         using namespace nvcuda;
-        #pragma unroll
+#pragma unroll
         for (int wmidx = 0; wmidx < WMITERS; ++wmidx)
         {
-            #pragma unroll
+#pragma unroll
             for (int wnidx = 0; wnidx < WNITERS; ++wnidx)
             {
                 wmma::load_matrix_sync(c_frag[wmidx * WNITERS + wnidx], C + offset_c + wmidx * WMMA_M * N + wnidx * WMMA_N,
                                        N, wmma::mem_row_major);
-                                       #pragma unroll
+#pragma unroll
                 for (int idx = 0; idx < c_frag[wmidx * WNITERS + wnidx].num_elements; ++idx)
                 {
                     c_frag[wmidx * WNITERS + wnidx].x[idx] = alpha * acc_frag[wmidx * WNITERS + wnidx].x[idx] + beta * c_frag[wmidx * WNITERS + wnidx].x[idx];
@@ -840,7 +842,7 @@ namespace gemm
         FragAccType acc_frag[WMITERS * WNITERS];
         FragCType c_frag[WMITERS * WNITERS];
 
-        #pragma unroll
+#pragma unroll
         for (int i = 0; i < WMITERS * WNITERS; ++i)
         {
             wmma::fill_fragment(acc_frag[i], 0.0f);
@@ -887,6 +889,16 @@ namespace gemm
 
         // printf("in launchSgemmSmemKernel_v6: blockdimx: %d blockdimy: %d", block.x, block.y);
         SgemmSmemKernel_v7<BM, BN, BK, WM, WN, WMMA_M, WMMA_N, WMMA_K><<<gird, block, 0, stream>>>(A, B, C, M, N, K, alpha, beta);
+    }
+
+    void launchSgemmcuBlas(const float *A, const float *B, float *C, const int M, const int N, const int K,
+                           const float alpha, const float beta, cudaStream_t stream)
+    {
+        cublasHandle_t handle;
+        CHECK_CUBLAS_STATUS(cublasCreate(&handle));
+        CHECK_CUBLAS_STATUS(cublasSetStream(handle, stream));
+        CHECK_CUBLAS_STATUS(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, N, A, K, &beta, C, N));
+        CHECK_CUBLAS_STATUS(cublasDestroy(handle));
     }
 
 } // namespace gemm
