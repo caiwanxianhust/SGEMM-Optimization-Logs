@@ -1,11 +1,13 @@
 
 #include "sgemm.cuh"
+#include "utils.h"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <assert.h>
 #include <mma.h>
 #include <cuda/barrier>
+#include <cublas_v2.h>
 
 namespace gemm
 {
@@ -275,7 +277,9 @@ namespace gemm
 
         int row_a, col_a, row_b, col_b;
 
-        __shared__ float s_a[BK * BM]; // transpose s_a to [BK, BM]
+        // 通过 Padding 避免 bank conflict
+        const int extra_col = 4;
+        __shared__ float s_a[BK * (BM + extra_col)]; // transpose s_a to [BK, BM + extra_col]
         __shared__ float s_b[BK * BN];
 
         float tmp[TM * TN] = {0.0f};
@@ -293,10 +297,10 @@ namespace gemm
                 col_a = j % BK;
                 float4 tmp = reinterpret_cast<const float4 *>(A + offset_a + row_a * K + i + col_a)[0];
 
-                s_a[col_a * BM + row_a] = tmp.x;
-                s_a[(col_a + 1) * BM + row_a] = tmp.y;
-                s_a[(col_a + 2) * BM + row_a] = tmp.z;
-                s_a[(col_a + 3) * BM + row_a] = tmp.w;
+                s_a[col_a * (BM + extra_col) + row_a] = tmp.x;
+                s_a[(col_a + 1) * (BM + extra_col) + row_a] = tmp.y;
+                s_a[(col_a + 2) * (BM + extra_col) + row_a] = tmp.z;
+                s_a[(col_a + 3) * (BM + extra_col) + row_a] = tmp.w;
             }
 
 #pragma unroll
@@ -315,7 +319,7 @@ namespace gemm
 #pragma unroll
                 for (int tmidx = 0; tmidx < TM; ++tmidx)
                 {
-                    reg_a[tmidx] = s_a[threadRow * TM + tmidx + j * BM];
+                    reg_a[tmidx] = s_a[threadRow * TM + tmidx + j * (BM + extra_col)];
                 }
 #pragma unroll
                 for (int tnidx = 0; tnidx < TN; ++tnidx)
@@ -366,7 +370,7 @@ namespace gemm
     template <int BM, int BN, int BK>
     __device__ void loadFromGmem(const float *A, const float *B, const int M, const int N, const int K,
                                  float *s_a, float *s_b, int offset_a, int offset_b,
-                                 const int bkidx, const int buffer_id)
+                                 const int bkidx, const int buffer_id, const int extra_col)
     {
         int row_a, col_a, row_b, col_b;
         float4 tmp;
@@ -379,10 +383,10 @@ namespace gemm
 
             // 每次从 global mem 加载 4 个 float 到 shared mem
             tmp = reinterpret_cast<const float4 *>(A + offset_a + row_a * K + bkidx + col_a)[0];
-            s_a[buffer_id * BK * BM + col_a * BM + row_a] = tmp.x;
-            s_a[buffer_id * BK * BM + (col_a + 1) * BM + row_a] = tmp.y;
-            s_a[buffer_id * BK * BM + (col_a + 2) * BM + row_a] = tmp.z;
-            s_a[buffer_id * BK * BM + (col_a + 3) * BM + row_a] = tmp.w;
+            s_a[buffer_id * BK * (BM + extra_col) + col_a * (BM + extra_col) + row_a] = tmp.x;
+            s_a[buffer_id * BK * (BM + extra_col) + (col_a + 1) * (BM + extra_col) + row_a] = tmp.y;
+            s_a[buffer_id * BK * (BM + extra_col) + (col_a + 2) * (BM + extra_col) + row_a] = tmp.z;
+            s_a[buffer_id * BK * (BM + extra_col) + (col_a + 3) * (BM + extra_col) + row_a] = tmp.w;
         }
 
 #pragma unroll
@@ -398,7 +402,7 @@ namespace gemm
     template <int BM, int BN, int BK>
     __device__ void loadFromGmemToSmemAndConvertToHalf(const float *A, const float *B, const int M, const int N, const int K,
                                                        half *s_a, half *s_b, int offset_a, int offset_b,
-                                                       const int bkidx, const int buffer_id)
+                                                       const int bkidx, const int buffer_id, const int extra_col)
     {
         int row_a, col_a, row_b, col_b;
         float4 tmp4;
@@ -410,10 +414,10 @@ namespace gemm
             col_a = j % BK;
             // 每次从 global mem 加载 4 个 float 到 shared mem
             tmp4 = reinterpret_cast<const float4 *>(A + offset_a + row_a * K + bkidx + col_a)[0];
-            s_a[buffer_id * BK * BM + col_a * BM + row_a] = __float2half(tmp4.x);
-            s_a[buffer_id * BK * BM + (col_a + 1) * BM + row_a] = __float2half(tmp4.y);
-            s_a[buffer_id * BK * BM + (col_a + 2) * BM + row_a] = __float2half(tmp4.z);
-            s_a[buffer_id * BK * BM + (col_a + 3) * BM + row_a] = __float2half(tmp4.w);
+            s_a[buffer_id * BK * (BM + extra_col) + col_a * (BM + extra_col) + row_a] = __float2half(tmp4.x);
+            s_a[buffer_id * BK * (BM + extra_col) + (col_a + 1) * (BM + extra_col) + row_a] = __float2half(tmp4.y);
+            s_a[buffer_id * BK * (BM + extra_col) + (col_a + 2) * (BM + extra_col) + row_a] = __float2half(tmp4.z);
+            s_a[buffer_id * BK * (BM + extra_col) + (col_a + 3) * (BM + extra_col) + row_a] = __float2half(tmp4.w);
         }
 
         float2 tmp2;
@@ -430,7 +434,7 @@ namespace gemm
     template <int BM, int BN, int BK, int WM, int WN, int TM, int TN>
     __device__ void processFromSmem(const float *s_a, const float *s_b, float *reg_a, float *reg_b, float *tmp, const int WMITERS, const int WNITERS,
                                     const int warp_sub_M, const int warp_sub_N, const int warp_row, const int warp_col, const int thread_in_warp_row,
-                                    const int thread_in_warp_col, const int buffer_id)
+                                    const int thread_in_warp_col, const int buffer_id, const int extra_col)
     {
 #pragma unroll
         for (int j = 0; j < BK; ++j)
@@ -443,7 +447,7 @@ namespace gemm
                 for (int tmidx = 0; tmidx < TM; ++tmidx)
                 {
                     reg_a[w_m_id * TM + tmidx] =
-                        s_a[buffer_id * BK * BM + j * BM + warp_row * WM + w_m_id * warp_sub_M + thread_in_warp_row * TM + tmidx];
+                        s_a[buffer_id * BK * (BM + extra_col) + j * (BM + extra_col) + warp_row * WM + w_m_id * warp_sub_M + thread_in_warp_row * TM + tmidx];
                 }
             }
 
@@ -539,7 +543,9 @@ namespace gemm
         const int offset_b = blockIdx.x * BN;
         const int offset_c = blockIdx.y * BM * N + warp_row * WM * N + blockIdx.x * BN + warp_col * WN;
 
-        __shared__ float s_a[BK * BM]; // transpose s_a to [BK, BM]
+        // 通过 Padding 避免 bank conflict
+        const int extra_col = 4;
+        __shared__ float s_a[BK * (BM + extra_col)]; // transpose s_a to [BK, BM + extra_col]
         __shared__ float s_b[BK * BN];
 
         float tmp[WMITERS * TM * WNITERS * TN] = {0.0f};
@@ -550,11 +556,11 @@ namespace gemm
         for (int i = 0; i < K; i += BK)
         {
             // 每次从 global mem 加载 4 个 float 到 shared mem
-            loadFromGmem<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, i, 0);
+            loadFromGmem<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, i, 0, extra_col);
             __syncthreads();
 
             processFromSmem<BM, BN, BK, WM, WN, TM, TN>(s_a, s_b, reg_a, reg_b, tmp, WMITERS, WNITERS, warp_sub_M, warp_sub_N,
-                                                        warp_row, warp_col, thread_in_warp_row, thread_in_warp_col, 0);
+                                                        warp_row, warp_col, thread_in_warp_row, thread_in_warp_col, 0, extra_col);
             __syncthreads();
         }
 
@@ -580,7 +586,7 @@ namespace gemm
     template <int BM, int BN, int BK, typename T>
     __device__ void loadFromGmemBymemcpyAsync(const float *A, const float *B, const int M, const int N, const int K,
                                               float *s_a, float *s_b, int offset_a, int offset_b,
-                                              const int bkidx, const int buffer_id, T &barrier)
+                                              const int bkidx, const int buffer_id, const int extra_col, T &barrier)
     {
         // 每次从 global mem 加载 4 个 float 到 shared mem
 #pragma unroll
@@ -590,16 +596,16 @@ namespace gemm
             int col_a = j % BK;
 
             // 每次从 global mem 加载 4 个 float 到 shared mem
-            cuda::memcpy_async(&s_a[buffer_id * BK * BM + col_a * BM + row_a],
+            cuda::memcpy_async(&s_a[buffer_id * BK * (BM + extra_col) + col_a * (BM + extra_col) + row_a],
                                &A[offset_a + row_a * K + bkidx + col_a],
                                cuda::aligned_size_t<sizeof(float)>(sizeof(float)), barrier);
-            cuda::memcpy_async(&s_a[buffer_id * BK * BM + (col_a + 1) * BM + row_a],
+            cuda::memcpy_async(&s_a[buffer_id * BK * (BM + extra_col) + (col_a + 1) * (BM + extra_col) + row_a],
                                &A[offset_a + row_a * K + bkidx + col_a + 1],
                                cuda::aligned_size_t<sizeof(float)>(sizeof(float)), barrier);
-            cuda::memcpy_async(&s_a[buffer_id * BK * BM + (col_a + 2) * BM + row_a],
+            cuda::memcpy_async(&s_a[buffer_id * BK * (BM + extra_col) + (col_a + 2) * (BM + extra_col) + row_a],
                                &A[offset_a + row_a * K + bkidx + col_a + 2],
                                cuda::aligned_size_t<sizeof(float)>(sizeof(float)), barrier);
-            cuda::memcpy_async(&s_a[buffer_id * BK * BM + (col_a + 3) * BM + row_a],
+            cuda::memcpy_async(&s_a[buffer_id * BK * (BM + extra_col) + (col_a + 3) * (BM + extra_col) + row_a],
                                &A[offset_a + row_a * K + bkidx + col_a + 3],
                                cuda::aligned_size_t<sizeof(float)>(sizeof(float)), barrier);
         }
@@ -643,7 +649,9 @@ namespace gemm
         const int offset_b = blockIdx.x * BN;
         const int offset_c = blockIdx.y * BM * N + warp_row * WM * N + blockIdx.x * BN + warp_col * WN;
 
-        __shared__ float s_a[2 * BK * BM]; // transpose s_a to [BK, BM]
+        // 通过 Padding 避免 bank conflict
+        const int extra_col = 4;
+        __shared__ float s_a[2 * BK * (BM + extra_col)]; // transpose s_a to [BK, BM + extra_col]
         __shared__ float s_b[2 * BK * BN];
 
         float tmp[WMITERS * TM * WNITERS * TN] = {0.0f};
@@ -652,21 +660,23 @@ namespace gemm
 
         int buffer_id = 0;
 
-        loadFromGmem<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, 0, buffer_id);
+        loadFromGmem<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, 0, buffer_id, extra_col);
         __syncthreads();
 
 #pragma unroll
         for (int i = 0; i < K - BK; i += BK)
         {
-            loadFromGmem<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, i + BK, 1 - buffer_id);
+            loadFromGmem<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, i + BK, 1 - buffer_id, extra_col);
             processFromSmem<BM, BN, BK, WM, WN, TM, TN>(s_a, s_b, reg_a, reg_b, tmp, WMITERS, WNITERS, warp_sub_M, warp_sub_N,
-                                                        warp_row, warp_col, thread_in_warp_row, thread_in_warp_col, buffer_id);
+                                                        warp_row, warp_col, thread_in_warp_row, thread_in_warp_col, buffer_id, extra_col);
             buffer_id = 1 - buffer_id;
             __syncthreads();
         }
 
         processFromSmem<BM, BN, BK, WM, WN, TM, TN>(s_a, s_b, reg_a, reg_b, tmp, WMITERS, WNITERS, warp_sub_M, warp_sub_N,
-                                                    warp_row, warp_col, thread_in_warp_row, thread_in_warp_col, buffer_id);
+                                                    warp_row, warp_col, thread_in_warp_row, thread_in_warp_col, buffer_id, extra_col);
+
+        __syncthreads();
         writeFromRegToGmem<BM, BN, BK, TM, TN>(tmp, C, M, N, WMITERS, WNITERS, warp_sub_M, warp_sub_N,
                                                thread_in_warp_row, thread_in_warp_col, offset_c, alpha, beta);
     }
@@ -693,7 +703,7 @@ namespace gemm
 
     template <int BM, int BN, int BK, int WM, int WN, int WMITERS, int WNITERS, int WKITERS, int WMMA_M, int WMMA_N, int WMMA_K, typename T1, typename T2, typename T3>
     __device__ void processFromSmemByTensorCore(const float *s_a, const float *s_b, T1 *a_frag, T2 *b_frag, T3 *acc_frag,
-                                                const int warp_row, const int warp_col, const int buffer_id)
+                                                const int warp_row, const int warp_col, const int buffer_id, const int extra_col)
     {
         using namespace nvcuda;
         int shm_offset;
@@ -702,8 +712,8 @@ namespace gemm
         {
             for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
             {
-                shm_offset = buffer_id * BK * BM + wkidx * BM + warp_row * WM + wmidx * WMMA_M;
-                wmma::load_matrix_sync(a_frag[wmidx * WKITERS + wkidx], s_a + shm_offset, BM);
+                shm_offset = buffer_id * BK * (BM + extra_col) + wkidx * (BM + extra_col) + warp_row * WM + wmidx * WMMA_M;
+                wmma::load_matrix_sync(a_frag[wmidx * WKITERS + wkidx], s_a + shm_offset, BM + extra_col);
             }
         }
 
@@ -731,37 +741,37 @@ namespace gemm
 
     template <int BM, int BN, int BK, int WM, int WN, int WMITERS, int WNITERS, int WKITERS, int WMMA_M, int WMMA_N, int WMMA_K, typename T1, typename T2, typename T3>
     __device__ void processFromSmemByTensorCore(const half *s_a, const half *s_b, T1 *a_frag, T2 *b_frag, T3 *acc_frag,
-                                                const int warp_row, const int warp_col, const int buffer_id)
+                                                const int warp_row, const int warp_col, const int buffer_id, const int extra_col)
     {
         using namespace nvcuda;
         int shm_offset;
-        #pragma unroll
+#pragma unroll
         for (int wmidx = 0; wmidx < WMITERS; ++wmidx)
         {
-            #pragma unroll
+#pragma unroll
             for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
             {
-                shm_offset = buffer_id * BK * BM + wkidx * BM + warp_row * WM + wmidx * WMMA_M;
-                wmma::load_matrix_sync(a_frag[wmidx * WKITERS + wkidx], s_a + shm_offset, BM);
+                shm_offset = buffer_id * BK * (BM + extra_col) + wkidx * (BM + extra_col) + warp_row * WM + wmidx * WMMA_M;
+                wmma::load_matrix_sync(a_frag[wmidx * WKITERS + wkidx], s_a + shm_offset, BM + extra_col);
             }
         }
-        #pragma unroll
+#pragma unroll
         for (int wnidx = 0; wnidx < WNITERS; ++wnidx)
         {
-            #pragma unroll
+#pragma unroll
             for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
             {
                 shm_offset = buffer_id * BK * BN + wkidx * BN + warp_col * WN + wnidx * WMMA_N;
                 wmma::load_matrix_sync(b_frag[wnidx * WKITERS + wkidx], s_b + shm_offset, BN);
             }
         }
-        #pragma unroll
+#pragma unroll
         for (int wmidx = 0; wmidx < WMITERS; ++wmidx)
         {
-            #pragma unroll
+#pragma unroll
             for (int wnidx = 0; wnidx < WNITERS; ++wnidx)
             {
-                #pragma unroll
+#pragma unroll
                 for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
                 {
                     wmma::mma_sync(acc_frag[wmidx * WNITERS + wnidx], a_frag[wmidx * WKITERS + wkidx],
@@ -776,15 +786,15 @@ namespace gemm
                                                    const int offset_c, const float alpha, const float beta)
     {
         using namespace nvcuda;
-        #pragma unroll
+#pragma unroll
         for (int wmidx = 0; wmidx < WMITERS; ++wmidx)
         {
-            #pragma unroll
+#pragma unroll
             for (int wnidx = 0; wnidx < WNITERS; ++wnidx)
             {
                 wmma::load_matrix_sync(c_frag[wmidx * WNITERS + wnidx], C + offset_c + wmidx * WMMA_M * N + wnidx * WMMA_N,
                                        N, wmma::mem_row_major);
-                                       #pragma unroll
+#pragma unroll
                 for (int idx = 0; idx < c_frag[wmidx * WNITERS + wnidx].num_elements; ++idx)
                 {
                     c_frag[wmidx * WNITERS + wnidx].x[idx] = alpha * acc_frag[wmidx * WNITERS + wnidx].x[idx] + beta * c_frag[wmidx * WNITERS + wnidx].x[idx];
@@ -816,7 +826,9 @@ namespace gemm
         const int offset_b = blockIdx.x * BN;
         const int offset_c = blockIdx.y * BM * N + warp_row * WM * N + blockIdx.x * BN + warp_col * WN;
 
-        __shared__ half s_a[2 * BK * BM]; // transpose s_a to [BK, BM]
+        // 通过 Padding 避免 bank conflict
+        constexpr int extra_col = 8;
+        __shared__ half s_a[2 * BK * (BM + extra_col)]; // transpose s_a to [BK, BM + extra_col]
         __shared__ half s_b[2 * BK * BN];
 
         using FragAType = wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major>;
@@ -828,7 +840,7 @@ namespace gemm
         FragAccType acc_frag[WMITERS * WNITERS];
         FragCType c_frag[WMITERS * WNITERS];
 
-        #pragma unroll
+#pragma unroll
         for (int i = 0; i < WMITERS * WNITERS; ++i)
         {
             wmma::fill_fragment(acc_frag[i], 0.0f);
@@ -836,23 +848,23 @@ namespace gemm
 
         int buffer_id = 0;
 
-        loadFromGmemToSmemAndConvertToHalf<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, 0, buffer_id);
+        loadFromGmemToSmemAndConvertToHalf<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, 0, buffer_id, extra_col);
         __syncthreads();
 
 #pragma unroll
         for (int i = 0; i < K - BK; i += BK)
         {
-            loadFromGmemToSmemAndConvertToHalf<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, i + BK, 1 - buffer_id);
+            loadFromGmemToSmemAndConvertToHalf<BM, BN, BK>(A, B, M, N, K, s_a, s_b, offset_a, offset_b, i + BK, 1 - buffer_id, extra_col);
 
             processFromSmemByTensorCore<BM, BN, BK, WM, WN, WMITERS, WNITERS, WKITERS, WMMA_M, WMMA_N, WMMA_K, FragAType, FragBType, FragAccType>(
-                s_a, s_b, a_frag, b_frag, acc_frag, warp_row, warp_col, buffer_id);
+                s_a, s_b, a_frag, b_frag, acc_frag, warp_row, warp_col, buffer_id, extra_col);
 
             buffer_id = 1 - buffer_id;
             __syncthreads();
         }
 
         processFromSmemByTensorCore<BM, BN, BK, WM, WN, WMITERS, WNITERS, WKITERS, WMMA_M, WMMA_N, WMMA_K, FragAType, FragBType, FragAccType>(
-            s_a, s_b, a_frag, b_frag, acc_frag, warp_row, warp_col, buffer_id);
+            s_a, s_b, a_frag, b_frag, acc_frag, warp_row, warp_col, buffer_id, extra_col);
         __syncthreads();
 
         writeFromRegToGmemByTensorCore<WMITERS, WNITERS, WMMA_M, WMMA_N, FragCType, FragAccType>(c_frag, acc_frag, C, M, N, offset_c, alpha, beta);
@@ -875,6 +887,16 @@ namespace gemm
 
         // printf("in launchSgemmSmemKernel_v6: blockdimx: %d blockdimy: %d", block.x, block.y);
         SgemmSmemKernel_v7<BM, BN, BK, WM, WN, WMMA_M, WMMA_N, WMMA_K><<<grid, block, 0, stream>>>(A, B, C, M, N, K, alpha, beta);
+    }
+
+    void launchSgemmcuBlas(const float *A, const float *B, float *C, const int M, const int N, const int K,
+                           const float alpha, const float beta, cudaStream_t stream)
+    {
+        cublasHandle_t handle;
+        CHECK_CUBLAS_STATUS(cublasCreate(&handle));
+        CHECK_CUBLAS_STATUS(cublasSetStream(handle, stream));
+        CHECK_CUBLAS_STATUS(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, N, A, K, &beta, C, N));
+        CHECK_CUBLAS_STATUS(cublasDestroy(handle));
     }
 
 } // namespace gemm

@@ -24,18 +24,20 @@ void printMatrix(const float *mat, char *s, int height, int width,
 void timingMatMul(const float *A, const float *B, float *C, const int M, const int N, const int K,
                   const float alpha, const float beta)
 {
+    constexpr int REPEAT_NUM = 100;
     cudaEvent_t start, stop;
     CHECK_CUDA_ERROR(cudaEventCreate(&start));
     CHECK_CUDA_ERROR(cudaEventCreate(&stop));
     CHECK_CUDA_ERROR(cudaEventRecord(start));
-
-    gemm::launchSgemmNaiveKernel(A, B, C, M, N, K, alpha, beta);
-
+    for (int i = 0; i < REPEAT_NUM; ++i)
+    {
+        gemm::launchSgemmNaiveKernel(A, B, C, M, N, K, alpha, beta);
+    }
     CHECK_CUDA_ERROR(cudaEventRecord(stop));
     CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
     float elapsed_time;
     CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsed_time, start, stop));
-    printf("alogrithm: naive kernel, elapsed_time: %g ms\n", elapsed_time);
+    printf("alogrithm: naive kernel, elapsed_time: %g ms\n", elapsed_time / REPEAT_NUM);
 }
 
 int main(int argc, char *argv[])
@@ -76,7 +78,7 @@ int main(int argc, char *argv[])
 
     CHECK_CUDA_ERROR(cudaMemcpy(h_c, d_c, sizeof(float) * M * N, cudaMemcpyDeviceToHost));
 
-    printMatrix(h_c, (char *)("Matrix C: "), M, N, M - 16, N - 16, M - 32, N - 32);
+    // printMatrix(h_c, (char *)("Matrix C: "), M, N, M - 16, N - 16, M - 32, N - 32);
     // printMatrix(h_c, (char *)("Matrix C: "), M, N, 32, 32, 0, 0);
 
     return 0;

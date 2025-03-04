@@ -25,19 +25,28 @@ void timingMatMul(const float *A, const float *B, float *C, const int M, const i
                   const float alpha, const float beta)
 {
     constexpr int REPEAT_NUM = 100;
+
+    cublasHandle_t handle;
+    CHECK_CUBLAS_STATUS(cublasCreate(&handle));
+    CHECK_CUBLAS_STATUS(cublasSetStream(handle, 0));
+
     cudaEvent_t start, stop;
     CHECK_CUDA_ERROR(cudaEventCreate(&start));
     CHECK_CUDA_ERROR(cudaEventCreate(&stop));
     CHECK_CUDA_ERROR(cudaEventRecord(start));
+
     for (int i = 0; i < REPEAT_NUM; ++i)
     {
-        gemm::launchSgemmSmemKernel_v2(A, B, C, M, N, K, alpha, beta);
+        CHECK_CUBLAS_STATUS(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, N, A, K, &beta, C, N));
     }
+
     CHECK_CUDA_ERROR(cudaEventRecord(stop));
     CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
     float elapsed_time;
     CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsed_time, start, stop));
-    printf("alogrithm: 1D tile, elapsed_time: %g ms\n", elapsed_time / REPEAT_NUM);
+    printf("alogrithm: cublas, elapsed_time: %g ms\n", elapsed_time / REPEAT_NUM);
+
+    CHECK_CUBLAS_STATUS(cublasDestroy(handle));
 }
 
 int main(int argc, char *argv[])
@@ -80,6 +89,14 @@ int main(int argc, char *argv[])
 
     // printMatrix(h_c, (char *)("Matrix C: "), M, N, M - 16, N - 16, M - 32, N - 32);
     // printMatrix(h_c, (char *)("Matrix C: "), M, N, 32, 32, 0, 0);
+
+    CHECK_CUDA_ERROR(cudaFree(d_a));
+    CHECK_CUDA_ERROR(cudaFree(d_b));
+    CHECK_CUDA_ERROR(cudaFree(d_c));
+
+    delete[] h_a;
+    delete[] h_b;
+    delete[] h_c;
 
     return 0;
 }
