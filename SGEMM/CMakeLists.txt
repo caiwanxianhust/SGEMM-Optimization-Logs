@@ -23,5 +23,5 @@ add_library(sgemm SHARED ${sgemm_files})
 target_compile_features(sgemm PUBLIC cxx_std_14)
 target_compile_options(sgemm PUBLIC "-gencode=arch=compute_${CMAKE_CUDA_ARCHITECTURES},code=sm_${CMAKE_CUDA_ARCHITECTURES}")
 set_target_properties(sgemm PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(sgemm PUBLIC -lcudart -lcublas)
+target_link_libraries(sgemm PUBLIC -lcudart)
 
