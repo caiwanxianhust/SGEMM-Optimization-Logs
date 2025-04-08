@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 project(SGEMM LANGUAGES CXX CUDA)
 
-set(CMAKE_CUDA_ARCHITECTURES 75)
+set(CMAKE_CUDA_ARCHITECTURES 89)
+
+find_package(CUDA REQUIRED)
+
+
+message(STATUS "CUDA_TOOLKIT_ROOT_DIR=${CUDA_TOOLKIT_ROOT_DIR}")  # 输出检测路径‌:ml-citation{ref="1,5" data="citationList"}
+
 
 set(COMMON_HEADER_DIRS
     ${PROJECT_SOURCE_DIR}
@@ -9,7 +15,7 @@ set(COMMON_HEADER_DIRS
 )
 
 set(COMMON_LIB_DIRS
-    /usr/local/cuda-11.7/lib64
+    /usr/local/cuda/lib64
 )
 
 include_directories(
@@ -17,6 +23,7 @@ include_directories(
 )
 
 message("-- Assign include directories (include_directories=${COMMON_HEADER_DIRS})")
+message("-- Assign include directories (common_lib_dirs=${COMMON_LIB_DIRS})")
 
 # add_definitions(-DNDEBUG)
 
