@@ -54,12 +54,12 @@ int main(int argc, char *argv[])
 
     for (int i = 0; i < M * K; ++i)
     {
-        h_a[i] = -(i % 512) + (i % 2048) * 0.1f;
+        h_a[i] = static_cast<float>((static_cast<int>(i * 41 % 2001)) * 0.01f - 10.0f);
     }
 
     for (int i = 0; i < N * K; ++i)
     {
-        h_b[i] = (i % 1024) - (i % 4096) * 0.7f;
+        h_b[i] = static_cast<float>((static_cast<int>(i % 211) - 105) * 0.095f);
     }
 
     // printMatrix(h_a, (char *)("Matrix A: "), M, K, M-16, K-16, M-32, K-32);
@@ -79,8 +79,9 @@ int main(int argc, char *argv[])
 
     CHECK_CUDA_ERROR(cudaMemcpy(h_c, d_c, sizeof(float) * M * N, cudaMemcpyDeviceToHost));
 
-    // printMatrix(h_c, (char *)("Matrix C: "), M, N, M - 16, N - 16, M - 32, N - 32);
-    // printMatrix(h_c, (char *)("Matrix C: "), M, N, 32, 32, 0, 0);
+    printMatrix(h_c, (char *)("Matrix C: "), M, N, M - 16, N - 16, M - 20, N - 24);
+    printMatrix(h_c, (char *)("Matrix C: "), M, N, 4, 8, 0, 0);
+
 
     return 0;
 }

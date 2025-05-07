@@ -751,7 +751,7 @@ namespace gemm
 #pragma unroll
             for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
             {
-                shm_offset = buffer_id * BK * (BM + extra_col) + wkidx * (BM + extra_col) + warp_row * WM + wmidx * WMMA_M;
+                shm_offset = buffer_id * BK * (BM + extra_col) + wkidx * WMMA_K * (BM + extra_col) + warp_row * WM + wmidx * WMMA_M;
                 wmma::load_matrix_sync(a_frag[wmidx * WKITERS + wkidx], s_a + shm_offset, BM + extra_col);
             }
         }
@@ -761,7 +761,7 @@ namespace gemm
 #pragma unroll
             for (int wkidx = 0; wkidx < WKITERS; ++wkidx)
             {
-                shm_offset = buffer_id * BK * BN + wkidx * BN + warp_col * WN + wnidx * WMMA_N;
+                shm_offset = buffer_id * BK * BN + wkidx * WMMA_K * BN + warp_col * WN + wnidx * WMMA_N;
                 wmma::load_matrix_sync(b_frag[wnidx * WKITERS + wkidx], s_b + shm_offset, BN);
             }
         }
@@ -875,7 +875,7 @@ namespace gemm
     {
         const int BM = 128;
         const int BN = 128;
-        const int BK = 16;
+        const int BK = 32;
         const int WM = 64;
         const int WN = 32;
         constexpr int WMMA_M = 16;
